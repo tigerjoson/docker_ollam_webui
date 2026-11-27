@@ -1,0 +1,80 @@
+# ============================================================
+# docker-compose.yaml
+# 用途：在 Windows Docker Desktop 中建立
+#       Ollama + Qdrant + FastAPI RAG 的完整環境
+# 修正重點：
+#   1. 環境變數名稱與 main.py 一致（DEFAULT_MODEL / EMBED_MODEL）
+#   2. 加入 Ollama 效能調校參數（限制載入模型數、CPU 執行緒）
+#   3. 移除 prepare-models 服務（您已有 qwen2.5:7b 與 nomic-embed-text）
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # 1. Ollama 服務
+  # ----------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - "XXXXX/my_AI_rag_container/ollama_models:/root/.ollama"
+    environment:
+      # 效能調校：限制同時載入模型數量，避免記憶體不足
+      - OLLAMA_MAX_LOADED_MODELS=1
+      # 設定 CPU 執行緒數（i5-13420H 有 10 核，建議 6）
+      - OLLAMA_NUM_THREADS=6
+      # 限制併發請求
+      - OLLAMA_NUM_PARALLEL=1
+      # 設定模型在記憶體中的保留時間（秒）
+      - OLLAMA_KEEP_ALIVE=300
+    restart: unless-stopped
+    command: ["serve"]
+
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # ----------------------------------------------------------
+  # 2. Qdrant 向量資料庫
+  # ----------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - "yourpath/qdrant_storage:/qdrant/storage"
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # 3. rag-api：FastAPI RAG 服務
+  # ----------------------------------------------------------
+  rag-api:
+    build: ./app
+    container_name: rag-api
+    ports:
+      - "8000:8000"
+
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+    environment:
+      # 修正：變數名稱與 main.py 一致
+      - DEFAULT_MODEL=qwen2.5:7b
+      - EMBED_MODEL=nomic-embed-text
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - QDRANT_URL=http://qdrant:6333
+
+    volumes:
+      - "CXXX/app:/app"
+
+    restart: unless-stopped
